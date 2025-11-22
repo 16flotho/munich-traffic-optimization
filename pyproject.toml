@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "munich-traffic-optimization"
+version = "0.1.0"
+description = "Munich traffic optimization project"
+authors = ["Thomas Florian"]
+readme = "README.md"
+packages = [{include = "munich_traffic_optimization", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+osmnx = "2.0.6"
+networkx = "^3.5"
+streamlit = "^1.51.0"
+matplotlib = "^3.8.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

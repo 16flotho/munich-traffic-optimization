@@ -12,6 +12,8 @@ osmnx = "2.0.6"
 networkx = "^3.5"
 streamlit = "^1.51.0"
 matplotlib = "^3.8.0"
+folium = "^0.20.0"
+streamlit-folium = "^0.25.3"
 
 
 [build-system]

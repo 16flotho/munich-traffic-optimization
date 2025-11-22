@@ -9,18 +9,18 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 # Constants for morning rush hour simulation
-MORNING_RUSH_START = datetime.strptime("07:00", "%H:%M")
+MORNING_RUSH_START = datetime.strptime("07:30", "%H:%M")
 MORNING_RUSH_PEAK = datetime.strptime("08:00", "%H:%M")
-MORNING_RUSH_END = datetime.strptime("09:00", "%H:%M")
+MORNING_RUSH_END = datetime.strptime("08:30", "%H:%M")
 BASE_SPEED_KMH = 30  # Average speed in city
-CONGESTION_SLOWDOWN = 0.25  # Speed reduction per car on same edge (25% per car)
+CONGESTION_SLOWDOWN = 0.20  # Speed reduction per car (20% per car)
 RANDOM_SEED = 42  # Seed for reproducibility
 
 # 1. GET DATA (Cached for speed)
 @st.cache_data
 def get_map():
-    # Download Munich inner ring area (centered on Marienplatz)
-    return ox.graph_from_point((48.1374, 11.5755), dist=2000, network_type='drive')
+    # Download Greater Munich area (centered on Marienplatz)
+    return ox.graph_from_point((48.1374, 11.5755), dist=15000, network_type='drive')
 
 @st.cache_data
 def get_ring_crossing_nodes(_graph, num_pairs=15, seed=RANDOM_SEED):
@@ -39,14 +39,15 @@ def get_ring_crossing_nodes(_graph, num_pairs=15, seed=RANDOM_SEED):
         lat = _graph.nodes[node]['y']
         lon = _graph.nodes[node]['x']
         
-        if lat > center_lat + 0.005:
+        # Increased from 0.005 to 0.025 for wider distribution (approx 2.5km from center)
+        if lat > center_lat + 0.025:
             north_nodes.append(node)
-        elif lat < center_lat - 0.005:
+        elif lat < center_lat - 0.025:
             south_nodes.append(node)
         
-        if lon > center_lon + 0.005:
+        if lon > center_lon + 0.025:
             east_nodes.append(node)
-        elif lon < center_lon - 0.005:
+        elif lon < center_lon - 0.025:
             west_nodes.append(node)
     
     pairs = []
@@ -132,6 +133,49 @@ def calculate_edge_time(graph, edge, num_cars_on_edge):
     time_seconds = length_m / actual_speed_ms
     return time_seconds / 60  # Return minutes
 
+
+def calculate_edge_marginal_social_cost(graph, edge, num_cars_on_edge):
+    """Marginal social cost t(x) + x * t'(x) for this edge.
+
+    We model t(x) using the same functional form as in calculate_edge_time,
+    then derive t'(x) analytically for the marginal cost term.
+    """
+    u, v = edge
+
+    edge_data = graph.get_edge_data(u, v)
+    if edge_data:
+        length_m = list(edge_data.values())[0].get('length', 100)
+    else:
+        length_m = 100
+
+    # Base speed in m/s
+    base_speed_ms = (BASE_SPEED_KMH * 1000) / 3600
+
+    # Congested speed as in calculate_edge_time
+    congestion_factor = max(0.2, 1.0 - (num_cars_on_edge * CONGESTION_SLOWDOWN))
+    actual_speed_ms = base_speed_ms * congestion_factor
+
+    # t(x) in minutes
+    t_x = (length_m / actual_speed_ms) / 60.0
+
+    # Derivative t'(x) w.r.t. num_cars_on_edge, in minutes per additional car
+    # For the unconstrained case (before hitting the 0.2 floor):
+    #   speed(x) = base_speed_ms * (1 - a x),   a = CONGESTION_SLOWDOWN
+    #   t(x)     = L / speed(x)
+    #   dt/dx    = L * a * base_speed_ms / speed(x)^2
+    # We then convert to minutes.
+    if congestion_factor > 0.2:
+        a = CONGESTION_SLOWDOWN
+        speed_x = actual_speed_ms
+        dt_dx_seconds = length_m * a * base_speed_ms / (speed_x ** 2)
+        t_prime = dt_dx_seconds / 60.0
+    else:
+        # Once we hit the minimum speed, approximating derivative as zero
+        t_prime = 0.0
+
+    msc_minutes = t_x + num_cars_on_edge * t_prime
+    return msc_minutes
+
 def calculate_route_time(graph, route, edge_loads):
     """Calculate total travel time for a route given edge loads."""
     total_time = 0
@@ -160,111 +204,71 @@ def selfish_routing(graph, trip_requests):
     
     return edge_loads
 
-def social_optimum_routing(graph, trip_requests, max_iterations=15):
-    """Social optimum: Centralized routing that minimizes total system travel time.
-    
-    Uses very strong congestion penalties to force route diversity.
+
+def evaluate_static_system_time(graph, trip_requests, edge_loads):
+    """Approximate total system time with static edge loads (no time dimension).
+
+    This uses the same congestion model as routing and is much cheaper than
+    running the full dynamic simulation. It gives us a consistent objective
+    to compare selfish vs. social-optimal assignments.
     """
-    edge_loads = defaultdict(int)
-    
-    # Initialize with shortest paths
-    for request in trip_requests:
-        try:
-            route = nx.shortest_path(graph, request.source, request.dest, weight='length')
-            request.assigned_route = route
-            for i in range(len(route) - 1):
-                edge = (route[i], route[i+1])
-                edge_loads[edge] += 1
-        except nx.NetworkXNoPath:
-            request.assigned_route = None
-    
-    # Iteratively improve
-    for iteration in range(max_iterations):
-        improved = False
-        
-        # Calculate current total system time
-        current_system_time = sum(
-            calculate_route_time(graph, req.assigned_route, edge_loads)
-            for req in trip_requests if req.assigned_route
-        )
-        
-        # Shuffle to avoid bias
-        import random
-        requests_to_optimize = [req for req in trip_requests if req.assigned_route]
-        random.shuffle(requests_to_optimize)
-        
-        # Try to reroute each user
-        for request in requests_to_optimize:
-            current_route = request.assigned_route
-            
-            # Create weighted graph with VERY STRONG congestion penalties
-            g_weighted = graph.copy()
-            for u, v, key, data in graph.edges(keys=True, data=True):
-                edge = (u, v)
-                load = edge_loads.get(edge, 0)
-                base_length = data.get('length', 100)
-                
-                # MUCH stronger penalty - exponential growth with load
-                # This forces the algorithm to spread traffic
-                if load > 0:
-                    # Exponential penalty: each additional car makes it exponentially worse
-                    congestion_factor = 1.0 + (load ** 2.0) * 0.5
-                else:
-                    congestion_factor = 1.0
-                    
-                g_weighted[u][v][key]['congestion_weight'] = base_length * congestion_factor
-            
-            # Find alternative route
+    total = 0.0
+    for req in trip_requests:
+        if not req.assigned_route:
+            continue
+        total += calculate_route_time(graph, req.assigned_route, edge_loads)
+    return total
+
+
+def social_optimum_routing(graph, trip_requests, max_iterations=5):
+    """Social optimum routing using marginal social cost (MSC) edge weights.
+
+    For a given edge and current load x, we define the weight as
+
+        MSC(x) = t(x) + x * t'(x)
+
+    where t(x) is the edge travel time under load x and t'(x) its derivative
+    with respect to x. We then run repeated shortest-path assignments with
+    these MSC weights (Beckmann-type approximation) to find a system-oriented
+    routing pattern.
+    """
+
+    # Start from selfish routing as an initial assignment
+    edge_loads = selfish_routing(graph, trip_requests)
+
+    for _ in range(max_iterations):
+        # Recompute MSC weights based on current edge loads
+        msc_weights = {}
+        for u, v in graph.edges():
+            edge = (u, v)
+            load = edge_loads.get(edge, 0)
+            msc = calculate_edge_marginal_social_cost(graph, edge, load)
+            msc_weights[edge] = msc
+
+        # Apply MSC weights as a temporary edge attribute
+        for u, v, key in graph.edges(keys=True):
+            edge = (u, v)
+            if edge in msc_weights:
+                graph[u][v][key]['msc_weight'] = msc_weights[edge]
+
+        # Clear previous loads and recompute them from MSC-based shortest paths
+        edge_loads = defaultdict(int)
+
+        for request in trip_requests:
             try:
-                alternative_route = nx.shortest_path(
-                    g_weighted,
+                route = nx.shortest_path(
+                    graph,
                     request.source,
                     request.dest,
-                    weight='congestion_weight'
+                    weight='msc_weight'
                 )
-                
-                # Skip if same as current
-                if alternative_route == current_route:
-                    continue
-                
-                # Calculate impact of switching
-                test_loads = edge_loads.copy()
-                
-                # Remove current route
-                for i in range(len(current_route) - 1):
-                    edge = (current_route[i], current_route[i+1])
-                    test_loads[edge] = max(0, test_loads[edge] - 1)
-                
-                # Add alternative route
-                for i in range(len(alternative_route) - 1):
-                    edge = (alternative_route[i], alternative_route[i+1])
-                    test_loads[edge] += 1
-                
-                # Calculate new total system time with new loads
-                new_system_time = 0
-                for req in trip_requests:
-                    if not req.assigned_route:
-                        continue
-                    # Use correct route for each request
-                    route_to_use = alternative_route if req.user_id == request.user_id else req.assigned_route
-                    new_system_time += calculate_route_time(graph, route_to_use, test_loads)
-                
-                # Accept if it reduces total system time
-                # Be more aggressive in early iterations
-                threshold = 1.0 if iteration < 5 else 0.995
-                if new_system_time < current_system_time * threshold:
-                    request.assigned_route = alternative_route
-                    edge_loads = test_loads
-                    current_system_time = new_system_time
-                    improved = True
-                    
+                request.assigned_route = route
+                for i in range(len(route) - 1):
+                    edge = (route[i], route[i + 1])
+                    edge_loads[edge] += 1
             except nx.NetworkXNoPath:
-                continue
-        
-        # If no improvements, we've converged
-        if not improved:
-            break
-    
+                request.assigned_route = None
+
     return edge_loads
 
 def simulate_traffic_with_database(graph, strategy, trip_requests):
@@ -350,6 +354,8 @@ def simulate_traffic_with_database(graph, strategy, trip_requests):
     return edge_traffic_history
 
 G = get_map()
+G = ox.routing.add_edge_speeds(G)
+G = ox.routing.add_edge_travel_times(G)
 
 # 3. VISUALIZE
 st.title("🚗 Munich Traffic Optimizer - Centralized Routing Database")
@@ -404,7 +410,7 @@ if st.button("Run Database Simulation"):
             edge_loads = selfish_routing(G, trip_requests)
         else:
             st.write("🧠 Computing social optimum routes (load balancing)...")
-            edge_loads = social_optimum_routing(G, trip_requests, max_iterations=15)
+            edge_loads = social_optimum_routing(G, trip_requests, max_iterations=20)
         
         # Simulate traffic execution
         st.write("🚦 Simulating traffic flow with assigned routes...")

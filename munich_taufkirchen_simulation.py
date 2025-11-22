@@ -66,6 +66,10 @@ class MunichTaufkirchenSimulation:
         self.G = None
         self.participants = []
         
+
+        print(f"Using parameters: BPR_ALPHA={self.bpr_alpha}, BPR_BETA={self.bpr_beta}, "
+              f"Traffic Lights={'Enabled' if self.enable_traffic_lights else 'Disabled'}, "
+              f"Intersection Delay={'Enabled' if self.enable_intersection_delay else 'Disabled'}")
         print("="*60)
         print("Munich-Taufkirchen Traffic Simulation")
         print("="*60)

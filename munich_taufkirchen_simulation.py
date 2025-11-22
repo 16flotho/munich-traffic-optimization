@@ -25,7 +25,7 @@ MUNICH_CENTER = (48.1374, 11.5755)  # Marienplatz
 # Area covering Munich center to Taufkirchen (roughly 15km radius from Munich center)
 DIST_FROM_CENTER = 15000  # meters
 
-NUM_PARTICIPANTS = 10000  # Number of traffic participants
+NUM_PARTICIPANTS = 1000  # Number of traffic participants
 SEED = 42
 
 # Time window for arrivals (morning rush hour)
@@ -105,7 +105,7 @@ class MunichTaufkirchenSimulation:
     
     def _prepare_graph(self):
         """Add capacity estimates to each edge based on road type."""
-        print(f"      Adding capacity estimates based on road types...")
+        # print(f"      Adding capacity estimates based on road types...")
         
         for u, v, key, data in self.G.edges(keys=True, data=True):
             # Ensure travel_time exists
@@ -283,11 +283,12 @@ class MunichTaufkirchenSimulation:
         
         # Add traffic light delay (average wait time)
         traffic_light_delay = 0
-        if ENABLE_TRAFFIC_LIGHTS and edge_data.get('has_traffic_light', False):
+        if ENABLE_TRAFFIC_LIGHTS and edge_data.get('has_traffic_light', True):
             # Average wait is half the cycle time, increases with congestion
             flow_ratio = edge_data['flow'] / edge_data['capacity']
             base_wait = 20  # seconds
             traffic_light_delay = base_wait * (1 + flow_ratio * 0.5)
+            print(f"      Adding traffic light delay for edge with flow {edge_data['flow']} and capacity {edge_data['capacity']}")
         
         # Add intersection complexity delay
         intersection_delay = 0
@@ -402,11 +403,17 @@ class MunichTaufkirchenSimulation:
         print(f"      - Max edge utilization:   {max_flow_ratio*100:.1f}%")
         print(f"      - Congested edges:        {congested_edges}")
         
+        # Store flow data for visualization
+        flow_data = {}
+        for u, v, k, d in self.G.edges(keys=True, data=True):
+            flow_data[(u, v, k)] = d['flow']
+        
         return {
             'avg_time': avg_time,
             'avg_free_flow': avg_free_flow,
             'total_time': total_time,
-            'successful_routes': successful_routes
+            'successful_routes': successful_routes,
+            'flow_data': flow_data
         }
     
     def run_social_routing(self):
@@ -426,8 +433,10 @@ class MunichTaufkirchenSimulation:
             d['current_cost'] = d['travel_time']  # Dynamic cost
         
         # Sort participants by desired arrival time (earlier arrivals get priority)
-        sorted_participants = sorted(self.participants, key=lambda p: p.desired_arrival)
-        
+        # sorted_participants = sorted(self.participants, key=lambda p: p.desired_arrival)
+        # make random order to simulate simultaneous departures
+        sorted_participants = random.sample(self.participants, len(self.participants))
+
         successful_routes = 0
         failed_routes = 0
         
@@ -503,11 +512,17 @@ class MunichTaufkirchenSimulation:
         print(f"      - Max edge utilization:   {max_flow_ratio*100:.1f}%")
         print(f"      - Congested edges:        {congested_edges}")
         
+        # Store flow data for visualization
+        flow_data = {}
+        for u, v, k, d in self.G.edges(keys=True, data=True):
+            flow_data[(u, v, k)] = d['flow']
+        
         return {
             'avg_time': avg_time,
             'avg_free_flow': avg_free_flow,
             'total_time': total_time,
-            'successful_routes': successful_routes
+            'successful_routes': successful_routes,
+            'flow_data': flow_data
         }
     
     def compare_results(self, selfish_results, social_results):
@@ -557,16 +572,25 @@ class MunichTaufkirchenSimulation:
         
         print(f"\n{'='*60}")
     
-    def visualize_results(self, scenario='selfish'):
-        """Create visualization of traffic flow (optional)."""
+    def visualize_results(self, scenario='selfish', flow_data=None):
+        """Create visualization of traffic flow (optional).
+        
+        Args:
+            scenario: Name of the scenario ('selfish' or 'social')
+            flow_data: Dictionary mapping (u, v, k) tuples to flow values
+        """
         print(f"\n[Optional] Generating visualization for {scenario} scenario...")
         
         try:
-            # Calculate edge flows
-            edge_flows = {}
-            for u, v, k, d in self.G.edges(keys=True, data=True):
-                flow = d.get('flow', 0)
-                edge_flows[(u, v, k)] = flow
+            # Use provided flow data instead of current graph state
+            if flow_data is None:
+                # Fallback to current graph state if no flow data provided
+                edge_flows = {}
+                for u, v, k, d in self.G.edges(keys=True, data=True):
+                    flow = d.get('flow', 0)
+                    edge_flows[(u, v, k)] = flow
+            else:
+                edge_flows = flow_data
             
             # Create color map based on flow
             max_flow = max(edge_flows.values()) if edge_flows else 1
@@ -634,8 +658,8 @@ def main():
     sim.compare_results(selfish_results, social_results)
     
     # Optional: Visualize (comment out if not needed)
-    # sim.visualize_results('selfish')
-    # sim.visualize_results('social')
+    sim.visualize_results('selfish', flow_data=selfish_results['flow_data'])
+    sim.visualize_results('social', flow_data=social_results['flow_data'])
     
     print(f"\n✓ Simulation complete!")
 

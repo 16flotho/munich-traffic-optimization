@@ -70,7 +70,7 @@ class GraphPlotter:
         
         # Convert to image
         buf = io.BytesIO()
-        plt.savefig(buf, format='svg', dpi=100, bbox_inches='tight')
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
         buf.seek(0)
         plt.close(fig)
         

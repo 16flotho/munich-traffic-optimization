@@ -5,7 +5,6 @@ description = "Munich traffic optimization project"
 authors = ["Thomas Florian"]
 readme = "README.md"
 packages = [{include = "src/*"}]
-# packages = [{include = "munich_traffic_optimization", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"

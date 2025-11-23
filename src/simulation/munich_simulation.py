@@ -22,7 +22,8 @@ class MunichSimulation(BaseSimulation):
     """Traffic simulation for Munich to Taufkirchen area."""
     
     def __init__(self, num_participants=NUM_PARTICIPANTS, bpr_alpha=0.5, bpr_beta=4.0, 
-                 enable_traffic_lights=True, enable_intersection_delay=True, seed=42):
+                 enable_traffic_lights=True, enable_intersection_delay=True, 
+                 social_percentage=100.0, seed=42):
         """
         Initialize Munich simulation with custom parameters.
         
@@ -32,6 +33,7 @@ class MunichSimulation(BaseSimulation):
             bpr_beta: BPR congestion power parameter
             enable_traffic_lights: Whether to enable traffic light delays
             enable_intersection_delay: Whether to enable intersection delays
+            social_percentage: Percentage of participants using SOCIAL routing (0-100)
             seed: Random seed for reproducibility
         """
         # Set random seeds
@@ -43,12 +45,15 @@ class MunichSimulation(BaseSimulation):
             raise ValueError(f"BPR Alpha must be between 0.0 and 2.0, got {bpr_alpha}")
         if not 1.0 <= bpr_beta <= 10.0:
             raise ValueError(f"BPR Beta must be between 1.0 and 10.0, got {bpr_beta}")
+        if not 0.0 <= social_percentage <= 100.0:
+            raise ValueError(f"Social percentage must be between 0 and 100, got {social_percentage}")
         
         # Store parameters
         self.bpr_alpha = bpr_alpha
         self.bpr_beta = bpr_beta
         self.enable_traffic_lights = enable_traffic_lights
         self.enable_intersection_delay = enable_intersection_delay
+        self.social_percentage = social_percentage
         self.seed = seed
         
         # Initialize base simulation
@@ -56,7 +61,8 @@ class MunichSimulation(BaseSimulation):
         
         print(f"Using parameters: BPR_ALPHA={self.bpr_alpha}, BPR_BETA={self.bpr_beta}, "
               f"Traffic Lights={'Enabled' if self.enable_traffic_lights else 'Disabled'}, "
-              f"Intersection Delay={'Enabled' if self.enable_intersection_delay else 'Disabled'}")
+              f"Intersection Delay={'Enabled' if self.enable_intersection_delay else 'Disabled'}, "
+              f"SOCIAL routing: {self.social_percentage}%")
     
     def load_network(self):
         """Download and prepare the road network from Munich to Taufkirchen."""
@@ -282,10 +288,11 @@ class MunichSimulation(BaseSimulation):
     
     def run_simulation(self):
         """
-        Run both SELFISH and SOCIAL routing simulations in parallel.
+        Run SELFISH, MIXED (if needed), and SOCIAL routing simulations in parallel.
         
         Returns:
-            Tuple of (selfish_results, social_results) dictionaries
+            Tuple of (selfish_results, mixed_results, social_results) dictionaries
+            mixed_results will be None if social_percentage is 100%
         """
         # Load network
         self.load_network()
@@ -293,7 +300,13 @@ class MunichSimulation(BaseSimulation):
         # Generate participants
         self.generate_participants()
         
-        print("\n[3/4] Running SELFISH and SOCIAL routing simulations in parallel...")
+        # Determine which simulations to run
+        run_mixed = int(self.social_percentage) < 100
+        
+        if run_mixed:
+            print("\n[3/4] Running SELFISH, MIXED, and SOCIAL routing simulations in parallel...")
+        else:
+            print("\n[3/4] Running SELFISH and SOCIAL routing simulations in parallel...")
         
         # Create deep copies of graph and participants for parallel execution
         G_selfish = copy.deepcopy(self.G)
@@ -301,9 +314,16 @@ class MunichSimulation(BaseSimulation):
         participants_selfish = copy.deepcopy(self.participants)
         participants_social = copy.deepcopy(self.participants)
         
+        if run_mixed:
+            G_mixed = copy.deepcopy(self.G)
+            participants_mixed = copy.deepcopy(self.participants)
+            max_workers = 3
+        else:
+            max_workers = 2
+        
         # Run simulations in parallel
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            # Submit both tasks
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit tasks
             future_selfish = executor.submit(
                 self._run_selfish_routing_parallel,
                 G_selfish,
@@ -315,31 +335,53 @@ class MunichSimulation(BaseSimulation):
                 participants_social
             )
             
+            futures = [future_selfish, future_social]
+            
+            if run_mixed:
+                future_mixed = executor.submit(
+                    self._run_mixed_routing_parallel,
+                    G_mixed,
+                    participants_mixed,
+                    self.social_percentage
+                )
+                futures.append(future_mixed)
+            
             # Collect results as they complete
             results = {}
-            for future in as_completed([future_selfish, future_social]):
+            for future in as_completed(futures):
                 result = future.result()
                 if result['type'] == 'selfish':
                     results['selfish'] = result
                     print("      ✓ SELFISH simulation completed")
-                else:
+                elif result['type'] == 'social':
                     results['social'] = result
                     print("      ✓ SOCIAL simulation completed")
+                else:
+                    results['mixed'] = result
+                    print(f"      ✓ MIXED simulation completed ({self.social_percentage}% SOCIAL)")
         
         selfish_results = results['selfish']
         social_results = results['social']
+        mixed_results = results.get('mixed', None)
         
         # Compare results
         print("\n" + "="*60)
         print("SIMULATION RESULTS")
         print("="*60)
-        print(f"SELFISH routing: {selfish_results['avg_time']/60:.2f} min average")
-        print(f"SOCIAL routing:  {social_results['avg_time']/60:.2f} min average")
-        improvement = (selfish_results['avg_time'] - social_results['avg_time']) / selfish_results['avg_time'] * 100
-        print(f"Improvement:     {improvement:.1f}%")
+        print(f"SELFISH routing (0% social):   {selfish_results['avg_time']/60:.2f} min average")
+        if run_mixed:
+            print(f"MIXED routing ({self.social_percentage:.0f}% social): {mixed_results['avg_time']/60:.2f} min average")
+        print(f"SOCIAL routing (100% social):  {social_results['avg_time']/60:.2f} min average")
+        
+        if run_mixed:
+            improvement_mixed = (selfish_results['avg_time'] - mixed_results['avg_time']) / selfish_results['avg_time'] * 100
+            print(f"\nMixed improvement:  {improvement_mixed:.1f}%")
+        
+        improvement_full = (selfish_results['avg_time'] - social_results['avg_time']) / selfish_results['avg_time'] * 100
+        print(f"Full improvement:   {improvement_full:.1f}%")
         print("="*60)
         
-        return selfish_results, social_results
+        return selfish_results, mixed_results, social_results
     
     def _run_selfish_routing_parallel(self, G, participants):
         """Run SELFISH routing strategy on provided graph and participants."""
@@ -511,6 +553,136 @@ class MunichSimulation(BaseSimulation):
                 'avg_time_min': avg_time/60,
                 'max_flow': max_flow,
                 'congested_edges': congested_edges,
+                'bpr_alpha': self.bpr_alpha,
+                'bpr_beta': self.bpr_beta
+            }
+        }
+    
+    def _run_mixed_routing_parallel(self, G, participants, social_percentage):
+        """
+        Run MIXED routing strategy where a percentage of participants use SOCIAL routing
+        and the rest use SELFISH routing.
+        
+        Args:
+            G: NetworkX graph
+            participants: List of TrafficParticipant objects
+            social_percentage: Percentage of participants using SOCIAL routing (0-100)
+        
+        Returns:
+            Dictionary with simulation results
+        """
+        # Reset flows and set initial costs
+        for u, v, k, d in G.edges(keys=True, data=True):
+            d['flow'] = 0
+            d['current_cost'] = d['travel_time']
+        
+        successful = 0
+        failed = 0
+        total_time = 0
+        flow_data = {}
+        
+        # Sort participants by arrival time
+        from operator import attrgetter
+        sorted_participants = sorted(participants, key=attrgetter('desired_arrival'))
+        
+        # Randomly assign routing strategy to each participant
+        num_social = int(len(sorted_participants) * (social_percentage / 100.0))
+        social_indices = set(random.sample(range(len(sorted_participants)), num_social))
+        
+        # Pre-generate random delays if enabled
+        delay_cache = {}
+        if self.enable_traffic_lights or self.enable_intersection_delay:
+            for u, v, k in G.edges(keys=True):
+                delay_cache[(u, v, k)] = self._get_random_delay(G[u][v][k])
+        
+        for idx, participant in enumerate(sorted_participants):
+            use_social = idx in social_indices
+            
+            try:
+                if use_social:
+                    # SOCIAL: Route based on current costs (includes congestion)
+                    route = nx.shortest_path(G, participant.origin, participant.destination, weight='current_cost')
+                else:
+                    # SELFISH: Route based on free-flow travel time
+                    route = nx.shortest_path(G, participant.origin, participant.destination, weight='travel_time')
+                
+                participant.route = route
+                
+                # Calculate travel time and update flows
+                travel_time = 0
+                for j in range(len(route) - 1):
+                    u, v = route[j], route[j + 1]
+                    edge_data = G.get_edge_data(u, v)
+                    
+                    # Find the best edge
+                    if use_social:
+                        key = min(edge_data.keys(), key=lambda k, ed=edge_data: ed[k].get('current_cost', ed[k]['travel_time']))
+                    else:
+                        key = min(edge_data.keys(), key=lambda k, ed=edge_data: ed[k]['travel_time'])
+                    
+                    data = G[u][v][key]
+                    
+                    # Update flow
+                    data['flow'] += 1
+                    flow_data[(u, v, key)] = data['flow']
+                    
+                    # Calculate actual travel time with current congestion
+                    free_flow_time = data['travel_time']
+                    flow = data['flow']
+                    capacity = data['capacity']
+                    
+                    # BPR function inline (amplified version)
+                    if capacity > 0:
+                        flow_ratio = flow / capacity
+                        congestion_factor = 1 + (2.0 * self.bpr_alpha) * (flow_ratio ** self.bpr_beta)
+                        congested_time = free_flow_time * congestion_factor
+                    else:
+                        congested_time = free_flow_time
+                    
+                    # Add delays
+                    if self.enable_traffic_lights or self.enable_intersection_delay:
+                        congested_time += delay_cache.get((u, v, key), 0)
+                    
+                    travel_time += congested_time
+                    
+                    # Update current cost for next participants
+                    data['current_cost'] = congested_time
+                
+                participant.actual_travel_time = travel_time
+                total_time += travel_time
+                successful += 1
+                
+            except Exception:
+                failed += 1
+                participant.route = None
+        
+        avg_time = total_time / successful if successful > 0 else 0
+        
+        # Calculate congestion statistics
+        if flow_data:
+            flows = list(flow_data.values())
+            max_flow = max(flows)
+            congested_edges = sum(f > 50 for f in flows)
+        else:
+            max_flow = 0
+            congested_edges = 0
+        
+        return {
+            'type': 'mixed',
+            'avg_time': avg_time,
+            'successful': successful,
+            'failed': failed,
+            'flow_data': flow_data,
+            'max_flow': max_flow,
+            'congested_edges': congested_edges,
+            'social_percentage': social_percentage,
+            'stats': {
+                'successful': successful,
+                'failed': failed,
+                'avg_time_min': avg_time/60,
+                'max_flow': max_flow,
+                'congested_edges': congested_edges,
+                'social_percentage': social_percentage,
                 'bpr_alpha': self.bpr_alpha,
                 'bpr_beta': self.bpr_beta
             }

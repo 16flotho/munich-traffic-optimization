@@ -373,7 +373,9 @@ def main():
         1. **INDIVIDUAL Routing**: Each driver independently chooses their shortest path based on their own preferences.
            This leads to congestion on popular routes.
         
-        2. **SOCIAL Routing**: A coordinated approach where routing decisions consider current traffic conditions,
+        2. **MIXED Routing**: A hybrid approach where a certain percentage of drivers use SOCIAL routing, while the rest use INDIVIDUAL routing.  
+        
+        3. **SOCIAL Routing**: A coordinated approach where routing decisions consider current traffic conditions,
            naturally distributing vehicles across alternative paths.
         
         ### Key Features:

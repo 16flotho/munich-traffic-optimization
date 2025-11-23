@@ -6,7 +6,7 @@ This module defines routing strategy classes for traffic simulations, specifical
 the SELFISH and SOCIAL routing strategies.
 """
 
-from src.core.base_simulation import BaseSimulation
+from core.base_simulation import BaseSimulation
 
 class SelfishRouting(BaseSimulation):
     """Implements the SELFISH routing strategy where each participant takes their shortest path."""

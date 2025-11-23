@@ -7,9 +7,9 @@ It includes methods for running the traffic simulation from Munich to Taufkirche
 comparing selfish and social routing strategies.
 """
 
-from src.core.base_simulation import BaseSimulation
-from src.core.traffic_participant import TrafficParticipant
-from src.core.config import MUNICH_CENTER, DIST_FROM_CENTER, NUM_PARTICIPANTS
+from core.base_simulation import BaseSimulation
+from core.traffic_participant import TrafficParticipant
+from core.config import MUNICH_CENTER, DIST_FROM_CENTER, NUM_PARTICIPANTS
 import random
 import numpy as np
 import copy
@@ -132,8 +132,8 @@ class MunichSimulation(BaseSimulation):
     
     def generate_participants(self):
         """Generate random traffic participants with origins, destinations, and arrival times."""
-        from src.core.traffic_participant import TrafficParticipant
-        from src.core.config import START_TIME, END_TIME
+        from core.traffic_participant import TrafficParticipant
+        from core.config import START_TIME, END_TIME
         from datetime import timedelta
         
         print(f"\n[2/4] Generating {self.num_participants} traffic participants...")

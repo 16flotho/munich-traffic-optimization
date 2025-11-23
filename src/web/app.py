@@ -8,14 +8,14 @@ Interactive comparison of SELFISH vs SOCIAL routing strategies.
 import sys
 from pathlib import Path
 
-# Add project root to Python path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
+# Add src directory to Python path
+src_dir = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(src_dir))
 
 import streamlit as st
-from src.core.config import MUNICH_CENTER, DIST_FROM_CENTER
-from src.simulation.munich_simulation import MunichSimulation
-from src.visualization.graph_plotter import create_visualization
+from core.config import MUNICH_CENTER, DIST_FROM_CENTER
+from simulation.munich_simulation import MunichSimulation
+from visualization.graph_plotter import create_visualization
 
 # Page configuration
 st.set_page_config(
@@ -155,7 +155,7 @@ def main():
                 label="SOCIAL Avg. Time",
                 value=f"{social_avg:.2f} min",
                 delta=f"{-time_saved:.2f} min" if time_saved > 0 else f"{-time_saved:.2f} min",
-                delta_color="normal" if time_saved > 0 else "inverse"
+                delta_color="inverse" if time_saved > 0 else "normal"
             )
         
         with col3:

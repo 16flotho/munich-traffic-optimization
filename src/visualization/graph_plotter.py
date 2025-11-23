@@ -30,7 +30,7 @@ class GraphPlotter:
             else:
                 intensity = min(flow / max_flow, 1.0)
                 if intensity < 0.2:
-                    edge_colors.append('#90EE90')  # Light green
+                    edge_colors.append("#158E00")  # Light green
                     edge_widths.append(0.5)
                 elif intensity < 0.5:
                     edge_colors.append('#FFD700')  # Yellow

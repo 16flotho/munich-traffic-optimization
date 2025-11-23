@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "Munich traffic optimization project"
 authors = ["Thomas Florian"]
 readme = "README.md"
-packages = [{include = "munich_traffic_optimization", from = "src"}]
+packages = [{include = "src/*"}]
+# packages = [{include = "munich_traffic_optimization", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -19,3 +20,7 @@ streamlit-folium = "^0.25.3"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

@@ -2,7 +2,7 @@
 name = "munich-traffic-optimization"
 version = "0.1.0"
 description = "Munich traffic optimization project"
-authors = ["Thomas Florian"]
+authors = ["16flotho"]
 readme = "README.md"
 packages = [{include = "src/*"}]
 
